@@ -298,6 +298,8 @@ class Coconut(Module):
 
             cached_kv = repeat(cached_kv, '... b h n d -> ... (b hyp) h n d', hyp = self.num_hypothesis)
 
+            num_steps_multistream = self.num_reasoning_steps - 1
+
         # latent reasoning is a recurrent model forward with the last hidden state being passed back in as input, while the prompt key / values are kept the same (prompt is NOT passed back in)
 
         latent_tokens = [latent_token]
@@ -314,7 +316,24 @@ class Coconut(Module):
 
         if has_multi_hyp:
             latent_token = self.merge_streams(latent_token)
-            cached_kv = reduce(cached_kv, '... (b hyp) h n d -> ... b h n d', 'mean', hyp = self.num_hypothesis)
+
+            cached_kv = stack(cached_kv)
+
+            # for the accumulated key / values ...
+
+            cached_kv_orig, cached_kv_multistream = cached_kv[..., -num_steps_multistream:, :], cached_kv[..., :-num_steps_multistream:, :]
+
+            # 1. average back the original cached key / values before the latent reasoning steps
+
+            cached_kv_orig = reduce(cached_kv_orig, '... (b hyp) h n d -> ... b h n d', 'mean', hyp = self.num_hypothesis)
+
+            # 2. allow the <eot> and subsequent answer tokens to see all of key / values across all hypothesis
+
+            cached_kv_multistream = rearrange(cached_kv_multistream, '... (b hyp) h n d -> ... b h (hyp n) d', hyp = self.num_hypothesis)
+
+            # 3. concat the original cached key / values with the flattened key / values for all hypothesis
+
+            cached_kv = cat((cached_kv_orig, cached_kv_multistream), dim = -2)
 
         # final step, latent token and end thought token, as well as answer sequence is appended together
 
