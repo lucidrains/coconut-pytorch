@@ -220,14 +220,31 @@ class Coconut(Module):
         self.has_multiple_hypothesis = num_hypothesis > 1
 
         if self.has_multiple_hypothesis:
-            self.to_streams = nn.Sequential(nn.Linear(dim, dim * num_hypothesis), Rearrange('b ... (hyp d) -> (b hyp) ... d', hyp = num_hypothesis))
-            self.merge_streams = nn.Sequential(Rearrange('(b hyp) ... d -> b ... (hyp d)', hyp = num_hypothesis), nn.Linear(dim * num_hypothesis, dim))
+            streams = num_hypothesis
+            eye = torch.eye(dim)
 
-            self.maybe_synth_streams = nn.Sequential(
-                Rearrange('(b hyp) n d -> b n (hyp d)', hyp = num_hypothesis),
-                nn.Linear(dim * num_hypothesis, dim * num_hypothesis),
-                Rearrange('b n (hyp d) -> (b hyp) n d', hyp = num_hypothesis),
-            ) if synthesize_hypothesis_per_step else nn.Identity()
+            self.to_streams = nn.Sequential(nn.Linear(dim, dim * streams), Rearrange('b ... (hyp d) -> (b hyp) ... d', hyp = streams))
+            self.merge_streams = nn.Sequential(Rearrange('(b hyp) ... d -> b ... (hyp d)', hyp = num_hypothesis), nn.Linear(dim * streams, dim))
+            self.maybe_synth_streams = nn.Identity()
+
+            if synthesize_hypothesis_per_step:
+                self.maybe_synth_streams = nn.Sequential(
+                    Rearrange('(b hyp) n d -> b n (hyp d)', hyp = streams),
+                    nn.Linear(dim * num_hypothesis, dim * streams),
+                    Rearrange('b n (hyp d) -> (b hyp) n d', hyp = streams),
+                )
+
+            # init to identity
+
+            self.to_streams[0].weight.data.copy_(repeat(eye, 'i j -> (r i) j', r = streams))
+            self.to_streams[0].bias.data.zero_()
+
+            self.merge_streams[-1].weight.data.copy_(repeat(eye, 'i j -> i (r j)', r = streams))
+            self.merge_streams[-1].bias.data.zero_()
+
+            if synthesize_hypothesis_per_step:
+                self.maybe_synth_streams[1].weight.data.copy_(repeat(eye, 'i j -> (r1 i) (r2 j)', r1 = streams, r2 = streams))
+                self.maybe_synth_streams[1].bias.data.zero_()
 
     def forward(
         self,
