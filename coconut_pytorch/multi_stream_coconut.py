@@ -404,7 +404,7 @@ class Coconut(Module):
         if self.learn_begin_of_thought:
             pred_bot_embed, rest_logits = embeds[:, -2], prompt_logits[:, -2]
 
-            pred_bot_logits = einsum('b d, d -> b', pred_bot_embed, self.begin_of_thought[0])
+            pred_bot_logits = einsum('b d, n d -> b', pred_bot_embed, self.begin_of_thought)
             pred_bot_logits = rearrange(pred_bot_logits, 'b -> b 1')
 
             bot_logits = cat((pred_bot_logits, rest_logits), dim = -1)
