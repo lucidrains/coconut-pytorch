@@ -1,6 +1,6 @@
 [project]
 name = "coconut-pytorch"
-version = "0.0.22"
+version = "0.0.23"
 description = "Coconut in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -30,6 +30,16 @@ dependencies = [
     'x-transformers>=1.42.26',
     'torch>=2.4'    
 ]
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "ruff>=0.4.2",
+    "pytest>=8.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [project.urls]
 Homepage = "https://pypi.org/project/coconut-pytorch/"

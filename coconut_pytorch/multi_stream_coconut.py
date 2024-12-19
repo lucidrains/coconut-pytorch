@@ -176,7 +176,7 @@ class Transformer(Module):
 
         # determine cached kv length
 
-        cached_kv_len = cached_kv.shape[-2] if exists(cached_kv) else 0.
+        cached_kv_len = cached_kv[0].shape[-2] if exists(cached_kv) else 0.
 
         # rotary pos emb
 
