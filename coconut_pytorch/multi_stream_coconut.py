@@ -23,6 +23,9 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def l2norm(t):
+    return F.normalize(t, dim = -1)
+
 # sampling helpers
 
 def log(t, eps = 1e-20):
@@ -230,7 +233,9 @@ class Coconut(Module):
         learn_begin_of_thought = False,
         num_hypothesis = 1, # extending the paper, allow for multiple sequence latent streams, merged at the end
         synthesize_hypothesis_per_step = False,
-        checkpoint = False
+        checkpoint = False,
+        begin_thought_loss_weight = 1.,
+        hyp_diff_loss_weight = 1.
     ):
         super().__init__()
 
@@ -290,6 +295,11 @@ class Coconut(Module):
             if synthesize_hypothesis_per_step:
                 self.maybe_synth_streams[1].weight.data.copy_(repeat(eye, 'i j -> (r1 i) (r2 j)', r1 = streams, r2 = streams))
                 self.maybe_synth_streams[1].bias.data.zero_()
+
+        # loss related
+
+        self.begin_thought_loss_weight = begin_thought_loss_weight
+        self.hyp_diff_loss_weight = hyp_diff_loss_weight
 
     @torch.no_grad()
     def generate(
@@ -401,7 +411,7 @@ class Coconut(Module):
         l - logits (num tokens)
         """
 
-        batch, num_thoughts, has_multi_hyp = prompt.shape[0], self.begin_of_thought.shape[0], self.has_multiple_hypothesis
+        batch, num_thoughts, has_multi_hyp, num_hyp = prompt.shape[0], self.begin_of_thought.shape[0], self.has_multiple_hypothesis, self.num_hypothesis
 
         # prepare <bot> and <eot> in paper
 
@@ -436,9 +446,24 @@ class Coconut(Module):
         if has_multi_hyp:
             latent_token = self.to_streams(latent_token)
 
-            cached_kv = repeat(cached_kv, '... b h n d -> ... (b hyp) h n d', hyp = self.num_hypothesis)
+            cached_kv = repeat(cached_kv, '... b h n d -> ... (b hyp) h n d', hyp = num_hyp)
 
             num_steps_multistream = self.num_reasoning_steps - 1
+
+        # maybe an aux loss to encourage each hypothesis to be different
+
+        hyp_diff_loss = self.zero
+
+        if has_multi_hyp and self.hyp_diff_loss_weight > 0.:
+            latent_token_split_hyp = rearrange(latent_token, '(b hyp) ... d -> (b ...) hyp d', hyp = num_hyp)
+
+            normed_hyp = l2norm(latent_token_split_hyp)
+            cosine_sim = einsum('... i d, ... j d -> ... i j', normed_hyp, normed_hyp)
+
+            upper_right_tri = cosine_sim.triu(1)                      # only consider in aux loss cosine sim of latent token to all other latents, not to self
+            weight = (num_hyp ** 2) / ((num_hyp ** 2 - num_hyp) / 2)  # omit diagonal then divide by 2 as symmetric
+            print(weight
+            hyp_diff_loss = upper_right_tri.mean() * weight
 
         # whether to checkpoint or not
 
@@ -502,9 +527,13 @@ class Coconut(Module):
             answer
         )
 
-        loss_breakdown = (answer_loss, bot_loss)
+        loss_breakdown = (answer_loss, bot_loss, hyp_diff_loss)
 
-        total_loss = (answer_loss + bot_loss)
+        total_loss = (
+            answer_loss +
+            bot_loss * self.begin_thought_loss_weight +
+            hyp_diff_loss * self.hyp_diff_loss_weight
+        )
 
         if not return_intermediates:
             return total_loss
