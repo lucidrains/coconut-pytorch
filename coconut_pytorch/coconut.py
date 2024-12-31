@@ -74,6 +74,7 @@ class Attention(Module):
         dim_head = 64,
         heads = 8,
         attend_kwargs: dict = dict(),
+        accept_value_residual = False
     ):
         super().__init__()
         self.scale = dim_head ** -0.5
@@ -89,12 +90,19 @@ class Attention(Module):
         self.to_qkv = nn.Linear(dim, dim_inner * 3, bias = False)
         self.to_out = nn.Linear(dim_inner, dim, bias = False)
 
+        self.learned_value_residual_mixing = nn.Sequential(
+            nn.Linear(dim, heads, bias = False),
+            Rearrange('b n h -> b h n 1'),
+            nn.Sigmoid()
+        ) if accept_value_residual else None
+
     def forward(
         self,
         x,
         mask: Tensor | None = None,
         cached_kv: Tensor | None = None,
-        return_cached_kv = False,
+        return_intermediates = False,
+        value_residual: Tensor | None = None,
         rotary_pos_emb = None
     ):
 
@@ -104,13 +112,21 @@ class Attention(Module):
 
         q, k, v = self.split_heads(qkv)
 
+        orig_v = v
+
+        assert not exists(self.learned_value_residual_mixing) ^ exists(value_residual)
+
+        if exists(self.learned_value_residual_mixing):
+            mix = self.learned_value_residual_mixing(x)
+            v = v.lerp(value_residual, mix)
+
         if exists(cached_kv):
             ck, cv = cached_kv
 
             k = cat((ck, k), dim = -2)
             v = cat((cv, v), dim = -2)
 
-        if return_cached_kv:
+        if return_intermediates:
             cached_kv = stack((k, v))
 
         if exists(rotary_pos_emb):
@@ -123,10 +139,10 @@ class Attention(Module):
 
         out = self.to_out(out)
 
-        if not return_cached_kv:
+        if not return_intermediates:
             return out
 
-        return out, cached_kv
+        return out, (cached_kv, orig_v)
 
 # main class
 
@@ -141,7 +157,8 @@ class Transformer(Module):
         heads = 8,
         ff_mult = 4,
         attend_kwargs: dict = dict(),
-        num_residual_streams = 4
+        num_residual_streams = 4,
+        accept_value_residual = False
     ):
         super().__init__()
         self.dim = dim
@@ -153,9 +170,11 @@ class Transformer(Module):
 
         layers = ModuleList([])
 
-        for _ in range(depth):
+        for ind in range(depth):
+            is_first = ind == 0
+
             layers.append(ModuleList([
-                init_hyper_conn(dim = dim, branch = Attention(dim = dim, dim_head = dim_head, heads = heads, attend_kwargs = attend_kwargs)),
+                init_hyper_conn(dim = dim, branch = Attention(dim = dim, dim_head = dim_head, heads = heads, attend_kwargs = attend_kwargs, accept_value_residual = not is_first)),
                 init_hyper_conn(dim = dim, branch = FeedForward(dim = dim, mult = ff_mult))
             ]))
 
@@ -199,6 +218,10 @@ class Transformer(Module):
 
         rotary_pos_emb = self.rotary_emb(seq)
 
+        # value residual
+
+        value_residual = None
+
         # cached key values need to be handled with priority and care for this paper
 
         cached_kv = default(cached_kv, [])
@@ -210,14 +233,16 @@ class Transformer(Module):
 
         for attn, ff in self.layers:
 
-            x, key_values = attn(
+            x, (key_values, values) = attn(
                 x,
                 rotary_pos_emb = rotary_pos_emb,
                 cached_kv = next(cached_kv_iter, None),
-                return_cached_kv = True
+                value_residual = value_residual,
+                return_intermediates = True
             )
 
             next_keys_values.append(key_values)
+            value_residual = default(value_residual, values)
 
             x = ff(x)
 
