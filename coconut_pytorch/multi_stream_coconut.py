@@ -15,6 +15,8 @@ from rotary_embedding_torch import RotaryEmbedding
 
 from x_transformers.attend import Attend
 
+from hyper_connections import get_init_and_expand_reduce_stream_functions
+
 # helper functions
 
 def exists(v):
@@ -144,7 +146,8 @@ class Transformer(Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        attend_kwargs: dict = dict()
+        attend_kwargs: dict = dict(),
+        num_residual_streams = 4
     ):
         super().__init__()
         self.dim = dim
@@ -152,12 +155,14 @@ class Transformer(Module):
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.rotary_emb = RotaryEmbedding(dim_head)
 
+        init_hyper_conn, self.expand_streams, self.reduce_streams = get_init_and_expand_reduce_stream_functions(num_residual_streams, disable = num_residual_streams == 1)
+
         layers = ModuleList([])
 
         for _ in range(depth):
             layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, attend_kwargs = attend_kwargs),
-                FeedForward(dim = dim, mult = ff_mult)
+                init_hyper_conn(dim = dim, branch = Attention(dim = dim, dim_head = dim_head, heads = heads, attend_kwargs = attend_kwargs)),
+                init_hyper_conn(dim = dim, branch = FeedForward(dim = dim, mult = ff_mult))
             ]))
 
         self.layers = layers
@@ -201,19 +206,21 @@ class Transformer(Module):
 
         next_keys_values = []
 
+        x = self.expand_streams(x)
+
         for attn, ff in self.layers:
 
-            attn_out, key_values = attn(
+            x, key_values = attn(
                 x,
                 cached_kv = next(cached_kv_iter, None),
                 return_cached_kv = True
             )
 
-            x = attn_out + x
-
             next_keys_values.append(key_values)
 
-            x = ff(x) + x
+            x = ff(x)
+
+        x = self.reduce_streams(x)
 
         embeds = self.norm(x)
 
