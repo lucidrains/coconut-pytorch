@@ -25,7 +25,7 @@ def test_coconut(
     loss = model(prompt, answer)
     loss.backward()
 
-    generated = model.generate(prompt, max_length = 64)
+    generated = model.generate(prompt, max_length = 64, num_reasoning_steps = 4)
     assert generated.shape == (2, 64)
 
 # multi stream version
@@ -55,5 +55,5 @@ def test_multi_stream_coconut(
     loss = model(prompt, answer)
     loss.backward()
 
-    generated = model.generate(prompt, max_length = 64)
+    generated = model.generate(prompt, max_length = 64, num_reasoning_steps = 4)
     assert generated.shape == (2, 64)

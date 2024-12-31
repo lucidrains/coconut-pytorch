@@ -346,9 +346,10 @@ class Coconut(Module):
         max_length = 16,
         filter_fn = min_p_filter,
         filter_kwargs: dict = dict(),
-        temperature = 1.
+        temperature = 1.,
+        **forward_kwargs
     ):
-        prompt_logits, latent_tokens, answer_logits, cached_kv = self.forward(prompt)
+        prompt_logits, latent_tokens, answer_logits, cached_kv = self.forward(prompt, **forward_kwargs)
 
         out = prompt[:, 0:0]
 
@@ -370,13 +371,16 @@ class Coconut(Module):
         self,
         latent_token,
         cached_kv,
-        mask
+        mask,
+        num_reasoning_steps = None
     ):
+        num_reasoning_steps = default(num_reasoning_steps, self.num_reasoning_steps)
+
         if not torch.is_tensor(cached_kv):
             cached_kv = stack(cached_kv)
 
         num_thoughts = self.num_thoughts
-        num_recurrent_steps = self.num_reasoning_steps - 1
+        num_recurrent_steps = num_reasoning_steps - 1
 
         # recurrent model forward with next latent token + past cached kv, but checkpointed
 
@@ -418,13 +422,16 @@ class Coconut(Module):
         self,
         latent_token,
         cached_kv,
-        mask
+        mask,
+        num_reasoning_steps = None
     ):
+        num_reasoning_steps = default(num_reasoning_steps, self.num_reasoning_steps)
+
         # latent reasoning is a recurrent model forward with the last hidden state being passed back in as input, while the prompt key / values are kept the same (prompt is NOT passed back in)
 
         latent_tokens = [latent_token]
 
-        num_recurrent_steps = self.num_reasoning_steps - 1
+        num_recurrent_steps = num_reasoning_steps - 1
         num_thoughts = self.num_thoughts
 
         for i in range(num_recurrent_steps):
@@ -446,7 +453,8 @@ class Coconut(Module):
         prompt: Tensor | list[Tensor],
         answer: Tensor | list[Tensor] | None = None,
         return_loss = True,
-        return_intermediates = False
+        return_intermediates = False,
+        num_reasoning_steps = None
     ):
         """
         ein notation:
@@ -456,6 +464,8 @@ class Coconut(Module):
         d - feature dimension
         l - logits (num tokens)
         """
+
+        num_reasoning_steps = default(num_reasoning_steps, self.num_reasoning_steps)
 
         # handle variable length prompts
 
@@ -510,7 +520,7 @@ class Coconut(Module):
 
             cached_kv = repeat(cached_kv, '... b h n d -> ... (b hyp) h n d', hyp = num_hyp)
 
-            num_steps_multistream = self.num_reasoning_steps - 1
+            num_steps_multistream = num_reasoning_steps - 1
 
         # maybe an aux loss to encourage each hypothesis to be different
 
@@ -535,7 +545,7 @@ class Coconut(Module):
 
         latent_reasoning_fn = self.checkpointed_recurrent_latent_forward if should_checkpoint else self.recurrent_latent_forward
 
-        latent_token, latent_tokens, cached_kv, mask = latent_reasoning_fn(latent_token, cached_kv, mask = mask)
+        latent_token, latent_tokens, cached_kv, mask = latent_reasoning_fn(latent_token, cached_kv, mask = mask, num_reasoning_steps = num_reasoning_steps)
 
         # merge hypothesis if needed
 
