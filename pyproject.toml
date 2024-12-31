@@ -1,12 +1,12 @@
 [project]
 name = "coconut-pytorch"
-version = "0.0.28"
+version = "0.0.30"
 description = "Coconut in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
 ]
 readme = "README.md"
-requires-python = ">= 3.8"
+requires-python = ">= 3.9"
 license = { file = "LICENSE" }
 keywords = [
     'artificial intelligence',
@@ -26,6 +26,7 @@ classifiers=[
 
 dependencies = [
     'einops>=0.8.0',
+    'hyper-connections>=0.1.0',
     'rotary-embedding-torch>=0.5.3',
     'x-transformers>=1.42.26',
     'torch>=2.4'    
