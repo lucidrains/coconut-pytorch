@@ -80,3 +80,12 @@ answer = model.generate(prompt, max_length = 64) # (2, 64)
     url     = {https://api.semanticscholar.org/CorpusID:273532030}
 }
 ```
+
+```bibtex
+@inproceedings{Zhu2025ReasoningBS,
+    title     = {Reasoning by Superposition: A Theoretical Perspective on Chain of Continuous Thought},
+    author    = {Hanlin Zhu and Shibo Hao and Zhiting Hu and Jiantao Jiao and Stuart Russell and Yuandong Tian},
+    year      = {2025},
+    url       = {https://api.semanticscholar.org/CorpusID:278740606}
+}
+```
